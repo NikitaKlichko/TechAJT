@@ -35,7 +35,7 @@ class ModelMTL(nn.Module):
         self.model = AutoModel.from_pretrained(model_name)
         self.pooling_name = pooling_name
         self.num_hidden_states = num_hidden_states
-        self.binary_classifier = nn.Linear(self.num_hidden_states * self.model.config.hidden_size, 1)
+        self.binary_classifier = nn.Linear(self.num_hidden_states * self.model.config.hidden_size, 2)
         self.error_classifier = nn.Linear(self.num_hidden_states * self.model.config.hidden_size, num_error_types)
         self.dropout = nn.Dropout(0.1)
 
@@ -49,13 +49,13 @@ class ModelMTL(nn.Module):
         pooled_output = self.dropout(pooled_output)
         
         # out for binary clf
-        binary_logits = self.binary_classifier(pooled_output).squeeze(-1)
+        binary_logits = self.binary_classifier(pooled_output)
         # out for multi-class clf
         error_logits = self.error_classifier(pooled_output)
         
         return binary_logits, error_logits
 
-def predict(text, model, tokenizer, device, binary_thresh=0.5):
+def predict(text, model, tokenizer, device):
     model.eval()
     encoding = tokenizer(
         text,
@@ -69,14 +69,13 @@ def predict(text, model, tokenizer, device, binary_thresh=0.5):
         binary_logits, error_logits = model(input_ids=encoding['input_ids'].to(DEVICE),
                                             attention_mask=encoding['attention_mask'].to(DEVICE),)
     
-    is_correct = torch.sigmoid(binary_logits).item() > binary_thresh
+    is_correct = torch.argmax(binary_logits).cpu().item()
     error_type = torch.argmax(error_logits).item() if is_correct != 1 else -1
 
     return is_correct, error_type
 
 def main():
     parser = argparse.ArgumentParser(description="Model for correctness and type error prediction")
-    parser.add_argument("--text", type=str, required=True, help="Target text.")
     parser.add_argument("--output", type=str, default=OUTPUT_FILE, help="File for save prediction results.")
     args = parser.parse_args()
 
@@ -84,18 +83,24 @@ def main():
     model.load_state_dict(torch.load(WEIGHTS_MODEL_PATH, weights_only=True))
     model.to(DEVICE)
 
-    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
-    is_correct, error_type = predict(args.text, model, tokenizer, DEVICE)
+    while True:
+        print("Enter text:")
+        query = str(input())
+        if query.lower() == 'exit':
+            print("Exit...")
+            break
+        tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
+        is_correct, error_type = predict(query, model, tokenizer, DEVICE)
 
-    result = f"Text: {args.text}\n"
-    result += f"Correct: {'Yes' if is_correct else 'No'}\n"
-    if not is_correct:
-        result += f"Error type: {error_type}\n"
+        result = f"Text: {query}\n"
+        result += f"Correct: {'Yes' if is_correct else 'No'}\n"
+        if not is_correct:
+            result += f"Error type: {error_type}\n"
 
-    print(result)
+        print(result)
 
-    with open(args.output, "a") as f:
-        f.write(result + "\n")
+        with open(args.output, "a") as f:
+            f.write(result + "\n")
 
 if __name__ == "__main__":
     main()

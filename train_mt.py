@@ -61,7 +61,7 @@ class ModelMTL(nn.Module):
         self.model = AutoModel.from_pretrained(model_name)
         self.pooling_name = pooling_name
         self.num_hidden_states = num_hidden_states
-        self.binary_classifier = nn.Linear(self.num_hidden_states * self.model.config.hidden_size, 1)
+        self.binary_classifier = nn.Linear(self.num_hidden_states * self.model.config.hidden_size, 2)
         self.error_classifier = nn.Linear(self.num_hidden_states * self.model.config.hidden_size, num_error_types)
         self.dropout = nn.Dropout(0.1)
 
@@ -75,7 +75,7 @@ class ModelMTL(nn.Module):
         pooled_output = self.dropout(pooled_output)
         
         # out for binary clf
-        binary_logits = self.binary_classifier(pooled_output).squeeze(-1)
+        binary_logits = self.binary_classifier(pooled_output)
         # out for multi-class clf
         error_logits = self.error_classifier(pooled_output)
         
@@ -84,7 +84,7 @@ class ModelMTL(nn.Module):
 # Loss
 def mtl_loss(binary_logits, error_logits, binary_labels, error_labels, weight_error=0.5):
     # BCEWithLogitsLoss
-    loss_binary = nn.BCEWithLogitsLoss()(binary_logits, binary_labels)
+    loss_binary = nn.CrossEntropyLoss()(binary_logits, binary_labels.long())
     
     # MutliClass loss
     mask = (binary_labels == 0).float()  # mask for error texts
@@ -134,7 +134,7 @@ def train(model, dataloader, optimizer, scheduler, device, writer, epoch):
     return total_loss / len(dataloader)
 
 # Validation
-def evaluate(model, dataloader, device, writer, epoch, binary_thresh=0.5):
+def evaluate(model, dataloader, device, writer, epoch):
     model.eval()
     total_loss = 0
     binary_preds, binary_labels = [], []
@@ -156,17 +156,16 @@ def evaluate(model, dataloader, device, writer, epoch, binary_thresh=0.5):
             total_loss += loss.item()
             
             # Save prds
-            binary_preds.extend(torch.sigmoid(binary_logits).cpu().numpy())
+            binary_preds.extend(torch.argmax(binary_logits, dim=1).cpu().numpy())
             binary_labels.extend(binary_labels_batch.cpu().numpy())
             error_preds.extend(torch.argmax(error_logits, dim=1).cpu().numpy())
             error_labels.extend(error_labels_batch.cpu().numpy())
     
     # Metrics for binary clf
-    binary_preds = [1 if p > binary_thresh else 0 for p in binary_preds]
     binary_accuracy = accuracy_score(binary_labels, binary_preds)
-    binary_f1 = f1_score(binary_labels, binary_preds)
-    binary_precision = precision_score(binary_labels, binary_preds)
-    binary_recall = recall_score(binary_labels, binary_preds)
+    binary_f1 = f1_score(binary_labels, binary_preds, average='binary')
+    binary_precision = precision_score(binary_labels, binary_preds,  average='binary')
+    binary_recall = recall_score(binary_labels, binary_preds, average='binary')
     
     # Metrics for multi-class clf
     error_mask = [label != -1 for label in error_labels]  # Exclude correct texts
@@ -200,13 +199,13 @@ def evaluate(model, dataloader, device, writer, epoch, binary_thresh=0.5):
 # Parse args
 def parse_args():
     parser = argparse.ArgumentParser(description="Multi-Task Learning with Embedding Model")
-    parser.add_argument('--model_name', type=str, default='cointegrated/rubert-tiny2', help='Pretrained BERT model name')
-    parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training')
+    parser.add_argument('--model_name', type=str, default='cointegrated/rubert-tiny2', help='Pretrained some model name')
+    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--max_length', type=int, default=128, help='Max sequence length')
     parser.add_argument('--num_error_types', type=int, default=4, help='Number of error types')
     parser.add_argument('--learning_rate', type=float, default=2e-4, help='Learning rate')
     parser.add_argument('--num_epochs', type=int, default=5, help='Number of epochs')
-    parser.add_argument('--warmup_ration', type=int, default=0.1, help='Number of warmup steps for scheduler')
+    parser.add_argument('--warmup_ration', type=float, default=0.1, help='Number of warmup steps for scheduler')
     parser.add_argument('--use_scheduler', action='store_true', help='Use learning rate scheduler')
     parser.add_argument('--log_dir', type=str, default='runs', help='Directory for TensorBoard logs')
     parser.add_argument('--output_model_path', type=str, default='bert_mtl_model.pth', help='Path to save the trained model')
