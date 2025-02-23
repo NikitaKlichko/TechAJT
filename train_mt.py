@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 import os
 from datetime import datetime
 from tqdm import tqdm
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, classification_report
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, classification_report, matthews_corrcoef
 
 # Dataset for multi-task 
 class TextDataset(Dataset):
@@ -35,7 +35,7 @@ class TextDataset(Dataset):
             'attention_mask': encoding['attention_mask'].flatten(),
             'binary_label': torch.tensor(self.binary_labels[idx], dtype=torch.float),
             'error_label': torch.tensor(self.error_labels[idx], dtype=torch.long)
-        }
+            }
 
 def get_pooling(outputs, attention_masks, pooling_name="cls", hidden_states=1):
     last_hidden_state = outputs.hidden_states[-1]
@@ -56,14 +56,28 @@ def get_pooling(outputs, attention_masks, pooling_name="cls", hidden_states=1):
 
 # Model for multi-task learning
 class ModelMTL(nn.Module):
-    def __init__(self, model_name, num_error_types, num_hidden_states=1, pooling_name="cls"):
+    def __init__(self, model_name, num_error_types, num_hidden_states=1, pooling_name="cls", freeze=False):
         super().__init__()
         self.model = AutoModel.from_pretrained(model_name)
         self.pooling_name = pooling_name
         self.num_hidden_states = num_hidden_states
+        self.freeze = freeze
         self.binary_classifier = nn.Linear(self.num_hidden_states * self.model.config.hidden_size, 2)
         self.error_classifier = nn.Linear(self.num_hidden_states * self.model.config.hidden_size, num_error_types)
         self.dropout = nn.Dropout(0.1)
+
+        # Freeze encoder
+        if self.freeze:
+            for layer in model.bert.encoder.layer[:]:  # Freeze all layers
+                for param in layer.parameters():
+                    param.requires_grad = False
+
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        frozen_params = total_params - trainable_params
+
+        print(f"Trainable parameters: {trainable_params:.2f}M")
+        print(f"Frozen parameters: {frozen_params:.2f}M")
 
     def forward(self, input_ids, attention_mask):
         outputs = self.model(
@@ -163,6 +177,7 @@ def evaluate(model, dataloader, device, writer, epoch):
     
     # Metrics for binary clf
     binary_accuracy = accuracy_score(binary_labels, binary_preds)
+    mcc = matthews_corrcoef(binary_labels, binary_preds)
     binary_f1 = f1_score(binary_labels, binary_preds, average='binary')
     binary_precision = precision_score(binary_labels, binary_preds,  average='binary')
     binary_recall = recall_score(binary_labels, binary_preds, average='binary')
@@ -183,13 +198,14 @@ def evaluate(model, dataloader, device, writer, epoch):
     if writer:
         writer.add_scalar('Loss/val', total_loss / len(dataloader), epoch)
         writer.add_scalar('Accuracy/binary_val', binary_accuracy, epoch)
+        writer.add_scalar('MCC/binary_val', mcc, epoch)
         writer.add_scalar('F1/binary_val', binary_f1, epoch)
         writer.add_scalar('Accuracy/error_val', error_accuracy, epoch)
         writer.add_scalar('F1/error_val', error_f1, epoch)
     
     # Metrics output
     print(f"Validation Loss: {total_loss / len(dataloader):.3f}")
-    print(f"Binary Accuracy: {binary_accuracy:.3f}, F1: {binary_f1:.3f}")
+    print(f"Binary Accuracy: {binary_accuracy:.3f}, F1: {binary_f1:.3f}, MCC: {mcc:.3f}")
     print(f"Error Accuracy: {error_accuracy:.3f}, F1: {error_f1:.3f}")
     print("Error Classification Report:")
     print(error_report)

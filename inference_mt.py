@@ -72,7 +72,7 @@ def predict(text, model, tokenizer, device):
     is_correct = torch.argmax(binary_logits).cpu().item()
     error_type = torch.argmax(error_logits).item() if is_correct != 1 else -1
 
-    return is_correct, error_type
+    return is_correct, error_type    
 
 def main():
     parser = argparse.ArgumentParser(description="Model for correctness and type error prediction")
@@ -83,13 +83,14 @@ def main():
     model.load_state_dict(torch.load(WEIGHTS_MODEL_PATH, weights_only=True))
     model.to(DEVICE)
 
+    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
+
     while True:
         print("Enter text:")
         query = str(input())
         if query.lower() == 'exit':
             print("Exit...")
             break
-        tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
         is_correct, error_type = predict(query, model, tokenizer, DEVICE)
 
         result = f"Text: {query}\n"
