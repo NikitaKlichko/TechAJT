@@ -63,7 +63,7 @@ def predict(text, model, tokenizer, device):
     model.eval()
     encoding = tokenizer(
         text,
-        max_length=128,
+        max_length=MAX_LENGTH,
         padding='max_length',
         truncation=True,
         return_tensors='pt'
