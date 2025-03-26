@@ -4,12 +4,16 @@ from transformers import AutoTokenizer, AutoModel
 import argparse
 
 MAX_LENGTH = 128
-NUM_ERRORS = 4
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-INIT_MODEL_PATH = "cointegrated/rubert-tiny2"
-WEIGHTS_MODEL_PATH = "./bert_mtl_model.pth"
-TOKENIZER_PATH = "cointegrated/rubert-tiny2"
+NUM_ERRORS = 6
+
+INIT_MODEL_PATH = "path_to_init_model" 
+WEIGHTS_MODEL_PATH = "path_to_model_weights"
+TOKENIZER_PATH = "path_to_tokenizer"
 OUTPUT_FILE = "predictions.txt"
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+reverse_error_type_mapper = {0: "речевая", 1: "стилистическая", 2: "пунктуационная", 3: "грамматическая", 4: "лексическая", 5: "логическая"}
 
 def get_pooling(outputs, attention_masks, pooling_name="cls", hidden_states=1):
     last_hidden_state = outputs.hidden_states[-1]
@@ -59,20 +63,20 @@ def predict(text, model, tokenizer, device):
     model.eval()
     encoding = tokenizer(
         text,
-        max_length=MAX_LENGTH,
+        max_length=128,
         padding='max_length',
         truncation=True,
         return_tensors='pt'
     ).to(device)
     
     with torch.no_grad():
-        binary_logits, error_logits = model(input_ids=encoding['input_ids'].to(DEVICE),
-                                            attention_mask=encoding['attention_mask'].to(DEVICE),)
+        binary_logits, error_logits = model(input_ids=encoding['input_ids'].to(device),
+                                            attention_mask=encoding['attention_mask'].to(device),)
     
-    is_correct = torch.argmax(binary_logits).cpu().item()
-    error_type = torch.argmax(error_logits).item() if is_correct != 1 else -1
+    is_mistake = torch.argmax(binary_logits).cpu().item()
+    error_type = torch.argmax(error_logits).item() if is_mistake == 1 else -1
 
-    return is_correct, error_type    
+    return is_mistake, error_type  
 
 def main():
     parser = argparse.ArgumentParser(description="Model for correctness and type error prediction")
@@ -91,12 +95,12 @@ def main():
         if query.lower() == 'exit':
             print("Exit...")
             break
-        is_correct, error_type = predict(query, model, tokenizer, DEVICE)
+        is_mistake, error_type = predict(query, model, tokenizer, DEVICE)
 
         result = f"Text: {query}\n"
-        result += f"Correct: {'Yes' if is_correct else 'No'}\n"
-        if not is_correct:
-            result += f"Error type: {error_type}\n"
+        result += f"Correct: {'Yes' if not is_mistake else 'No'}\n"
+        if is_mistake:
+            result += f"Error type: {reverse_error_type_mapper[error_type]}\n"
 
         print(result)
 
